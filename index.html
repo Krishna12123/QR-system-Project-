@@ -1,0 +1,2144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ACCelerate'26 — QR Check-In System v2</title>
+
+<!-- External Libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<!-- EmailJS SDK -->
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<!-- jsPDF for participant pass PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+
+<style>
+/* ===================================================
+   ROOT VARIABLES & RESET
+   =================================================== */
+:root {
+  --bg: #0a0a0f; --surface: #13131a; --surface2: #1c1c28; --border: #2a2a3d;
+  --accent: #6c63ff; --accent2: #ff6b6b; --green: #00e676; --yellow: #ffd600;
+  --text: #e8e8f0; --muted: #6b6b8a; --radius: 12px;
+  --scan-cooldown: 2000; /* ms between scans */
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; min-height: 100vh; }
+
+/* ===================================================
+   SETUP SCREEN
+   =================================================== */
+#setup-screen {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 20px;
+  background: radial-gradient(ellipse at 50% 0%, #1a1040 0%, #0a0a0f 70%);
+}
+.setup-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 20px; padding: 40px; width: 100%; max-width: 480px; text-align: center;
+}
+.setup-box h1 { font-size: 28px; font-weight: 800; color: var(--accent); margin-bottom: 6px; }
+.setup-box p { color: var(--muted); margin-bottom: 28px; font-size: 14px; }
+.setup-box label { display: block; text-align: left; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 600; text-transform: uppercase; }
+.setup-box input {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-family: 'Space Mono', monospace;
+  font-size: 13px; padding: 12px 16px; margin-bottom: 14px; outline: none; transition: border-color 0.2s;
+}
+.setup-box input:focus { border-color: var(--accent); }
+.setup-box input::placeholder { color: var(--muted); }
+.btn-connect {
+  width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius);
+  font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; padding: 14px;
+  cursor: pointer; transition: opacity 0.2s, transform 0.1s;
+}
+.btn-connect:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-demo {
+  width: 100%; background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: var(--radius); font-family: 'Syne', sans-serif; font-size: 14px;
+  font-weight: 600; padding: 11px; cursor: pointer; margin-top: 10px; transition: all 0.2s;
+}
+.btn-demo:hover { border-color: var(--accent); color: var(--accent); }
+#setup-msg { margin-top: 16px; font-size: 14px; min-height: 20px; }
+.msg-ok { color: var(--green); } .msg-err { color: var(--accent2); }
+
+/* ===================================================
+   APP LAYOUT
+   =================================================== */
+#app { display: none; flex-direction: column; min-height: 100vh; }
+.header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 14px 24px; display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.header-title { font-size: 18px; font-weight: 800; color: var(--accent); }
+.header-sub { font-size: 12px; color: var(--muted); font-family: 'Space Mono', monospace; }
+.db-badge { font-size: 11px; font-family: 'Space Mono', monospace; padding: 4px 10px; border-radius: 20px; font-weight: 700; }
+.db-live { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+.db-demo { background: rgba(255,214,0,0.15); color: var(--yellow); border: 1px solid rgba(255,214,0,0.3); }
+
+/* ===================================================
+   NAVIGATION
+   =================================================== */
+.nav { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; padding: 0 16px; }
+.nav-btn {
+  background: none; border: none; color: var(--muted); font-family: 'Syne', sans-serif;
+  font-size: 13px; font-weight: 600; padding: 13px 16px; cursor: pointer;
+  border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.2s;
+}
+.nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.nav-btn:hover:not(.active) { color: var(--text); }
+
+/* ===================================================
+   CONTENT & TABS
+   =================================================== */
+.content { flex: 1; padding: 24px; max-width: 960px; margin: 0 auto; width: 100%; }
+.tab { display: none; } .tab.active { display: block; }
+
+/* ===================================================
+   CARD COMPONENTS
+   =================================================== */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; }
+.card-title { font-size: 16px; font-weight: 700; margin-bottom: 18px; color: var(--text); }
+
+/* ===================================================
+   FORM ELEMENTS
+   =================================================== */
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.form-row.single { grid-template-columns: 1fr; }
+.form-row.triple { grid-template-columns: 1fr 1fr 1fr; }
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+input, select {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-family: 'Syne', sans-serif;
+  font-size: 14px; padding: 10px 14px; outline: none; transition: border-color 0.2s;
+}
+input:focus, select:focus { border-color: var(--accent); }
+input[readonly] { background: rgba(108,99,255,0.08); color: var(--accent); font-weight: 700; cursor: default; border-color: rgba(108,99,255,0.25); }
+select option { background: var(--surface2); }
+
+.radio-group {
+  display: flex; gap: 20px; padding: 10px 14px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap;
+}
+.radio-label {
+  display: flex; align-items: center; gap: 7px; cursor: pointer;
+  font-size: 14px; color: var(--text); font-weight: 500; text-transform: none; letter-spacing: 0;
+}
+.radio-label input[type=radio] { width: auto; accent-color: var(--accent); cursor: pointer; }
+
+/* Toggle switch */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+.toggle-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.toggle-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 24px; transition: .3s;
+}
+.toggle-slider:before {
+  content: ''; position: absolute; height: 16px; width: 16px;
+  left: 3px; bottom: 3px; background: var(--muted);
+  border-radius: 50%; transition: .3s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); background: white; }
+
+/* ===================================================
+   BUTTONS
+   =================================================== */
+.btn {
+  border: none; border-radius: 8px; font-family: 'Syne', sans-serif; font-size: 14px;
+  font-weight: 700; padding: 11px 22px; cursor: pointer; transition: opacity 0.2s, transform 0.1s;
+  display: inline-flex; align-items: center; gap: 6px; position: relative; overflow: hidden;
+}
+.btn:hover { opacity: 0.88; transform: translateY(-1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-success { background: var(--green); color: #000; }
+.btn-danger  { background: var(--accent2); color: #fff; }
+.btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-yellow  { background: var(--yellow); color: #000; }
+.btn-sm { padding: 7px 14px; font-size: 12px; }
+.btn-full { width: 100%; justify-content: center; margin-top: 16px; }
+
+/* Button loading state */
+.btn-loading .btn-label { opacity: 0; }
+.btn-loading::after {
+  content: ''; position: absolute; width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===================================================
+   QR OUTPUT SECTION
+   =================================================== */
+#qr-output {
+  display: none; text-align: center; margin-top: 20px; padding: 24px;
+  background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);
+}
+#qr-canvas { margin: 0 auto 10px; position: relative; display: inline-block; }
+#qr-info { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+#qr-pid-display { font-family: 'Space Mono', monospace; font-size: 13px; color: var(--accent); margin-bottom: 6px; }
+.qr-status-badge {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px;
+  border-radius: 20px; font-size: 11px; font-weight: 700; font-family: 'Space Mono', monospace;
+  margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.qrs-active  { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+.qrs-used    { background: rgba(255,107,107,0.15); color: var(--accent2); border: 1px solid rgba(255,107,107,0.3); }
+.qrs-expired { background: rgba(255,214,0,0.15); color: var(--yellow); border: 1px solid rgba(255,214,0,0.3); }
+.qrs-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.qr-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+
+/* Email status */
+.email-status { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px 12px; border-radius: 8px; margin-top: 10px; }
+.email-sending { background: rgba(108,99,255,0.1); color: var(--accent); border: 1px solid rgba(108,99,255,0.2); }
+.email-sent    { background: rgba(0,230,118,0.1); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+.email-failed  { background: rgba(255,107,107,0.1); color: var(--accent2); border: 1px solid rgba(255,107,107,0.2); }
+.email-spinner { width: 14px; height: 14px; border: 2px solid rgba(108,99,255,0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+/* ===================================================
+   SCAN TAB
+   =================================================== */
+.scan-controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+#scanner-container {
+  background: var(--surface2); border-radius: var(--radius); overflow: hidden;
+  width: 100%; max-width: 420px; height: 310px; position: relative;
+}
+.manual-row { display: flex; gap: 10px; margin-top: 16px; }
+.manual-row input { flex: 1; }
+
+/* Cooldown bar */
+.cooldown-bar-wrap { margin-top: 8px; height: 3px; background: var(--surface2); border-radius: 3px; overflow: hidden; display: none; }
+.cooldown-bar { height: 100%; background: var(--accent); animation: cooldown linear forwards; }
+@keyframes cooldown { from{width:100%} to{width:0%} }
+
+/* ===================================================
+   SCAN RESULT (animated)
+   =================================================== */
+#scan-result {
+  display: none; padding: 20px; border-radius: var(--radius); margin-top: 16px;
+  border: 1px solid; animation: slideIn 0.35s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes slideIn { from{opacity:0;transform:translateY(12px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+.success-result { background: rgba(0,230,118,0.08); border-color: rgba(0,230,118,0.3) !important; }
+.error-result   { background: rgba(255,107,107,0.08); border-color: rgba(255,107,107,0.3) !important; }
+.warn-result    { background: rgba(255,214,0,0.08); border-color: rgba(255,214,0,0.3) !important; }
+.result-icon { font-size: 36px; margin-bottom: 8px; display: block; }
+.result-name { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+.result-detail { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.result-qr-badge { margin-top: 10px; display: inline-block; }
+
+/* Scan ripple effect overlay */
+.scan-flash {
+  position: fixed; inset: 0; pointer-events: none; z-index: 9998;
+  opacity: 0; transition: opacity 0.15s;
+}
+.scan-flash.green-flash { background: rgba(0,230,118,0.12); }
+.scan-flash.red-flash   { background: rgba(255,107,107,0.12); }
+.scan-flash.show { opacity: 1; }
+
+/* ===================================================
+   DASHBOARD
+   =================================================== */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.stat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; text-align: center; transition: transform 0.2s, border-color 0.2s; }
+.stat-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.stat-num { font-size: 36px; font-weight: 800; line-height: 1; }
+.stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 600; text-transform: uppercase; }
+.stat-green .stat-num { color: var(--green); }
+.stat-purple .stat-num { color: var(--accent); }
+.stat-red .stat-num { color: var(--accent2); }
+.stat-yellow .stat-num { color: var(--yellow); }
+
+/* Real-time ping indicator */
+.live-dot { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--green); font-family: 'Space Mono', monospace; font-weight: 700; }
+.live-dot::before { content:''; width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1s infinite; }
+
+/* ===================================================
+   TABLE STYLES
+   =================================================== */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 14px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+td { padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+tr:hover td { background: rgba(108,99,255,0.05); }
+
+/* ===================================================
+   BADGES
+   =================================================== */
+.badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 700; font-family: 'Space Mono', monospace; }
+.badge-in     { background: rgba(0,230,118,0.15); color: var(--green); }
+.badge-out    { background: rgba(255,107,107,0.15); color: var(--accent2); }
+.badge-d1     { background: rgba(108,99,255,0.2); color: var(--accent); }
+.badge-d2     { background: rgba(255,214,0,0.2); color: var(--yellow); }
+.badge-d3     { background: rgba(0,230,118,0.2); color: var(--green); }
+.badge-active { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+.badge-used   { background: rgba(255,107,107,0.15); color: var(--accent2); border: 1px solid rgba(255,107,107,0.3); }
+.badge-expd   { background: rgba(255,214,0,0.15); color: var(--yellow); border: 1px solid rgba(255,214,0,0.3); }
+.pid-tag { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); }
+
+/* Attendance dot */
+.att-dot { width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.att-yes { background: rgba(0,230,118,0.2); color: var(--green); border: 1px solid rgba(0,230,118,0.4); }
+.att-no  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+/* ===================================================
+   DAY TABS & MODE TOGGLE
+   =================================================== */
+.day-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.day-tab { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+.day-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+.mode-btn { padding: 9px 22px; border: none; background: var(--surface2); color: var(--muted); font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+.mode-btn.active-in  { background: var(--green); color: #000; }
+.mode-btn.active-out { background: var(--accent2); color: #fff; }
+
+/* ===================================================
+   SECTION HEADERS & DIVIDERS
+   =================================================== */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+hr.div { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+/* ===================================================
+   TOAST NOTIFICATION
+   =================================================== */
+#toast {
+  position: fixed; top: 20px; right: 20px; padding: 14px 22px; border-radius: var(--radius);
+  font-weight: 700; font-size: 14px; z-index: 9999; opacity: 0; transform: translateY(-10px);
+  transition: opacity 0.3s, transform 0.3s; max-width: 340px; pointer-events: none;
+}
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.success { background: var(--green); color: #000; }
+#toast.error   { background: var(--accent2); color: #fff; }
+#toast.info    { background: var(--accent); color: #fff; }
+#toast.warning { background: var(--yellow); color: #000; }
+
+/* ===================================================
+   EMAIL SETTINGS TAB
+   =================================================== */
+.settings-section { margin-bottom: 24px; }
+.settings-section-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+
+/* ===================================================
+   ANALYTICS MINI CHARTS
+   =================================================== */
+.mini-bar-wrap { display: flex; align-items: flex-end; gap: 4px; height: 48px; margin-top: 8px; }
+.mini-bar { flex: 1; border-radius: 4px 4px 0 0; background: var(--accent); opacity: 0.7; transition: height 0.5s ease, opacity 0.2s; min-height: 3px; }
+.mini-bar:hover { opacity: 1; }
+
+/* ===================================================
+   RESPONSIVE
+   =================================================== */
+@media(max-width:600px) {
+  .form-row, .form-row.triple { grid-template-columns: 1fr; }
+  .content { padding: 14px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .qr-actions { gap: 6px; }
+  .btn-sm { padding: 6px 10px; font-size: 11px; }
+}
+
+/* ===================================================
+   COPY ID BUTTON
+   =================================================== */
+.copy-btn {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; padding: 3px 6px; border-radius: 4px; transition: all 0.2s;
+  font-family: 'Space Mono', monospace;
+}
+.copy-btn:hover { background: rgba(108,99,255,0.1); color: var(--accent); }
+.copy-btn.copied { color: var(--green); }
+
+/* ===================================================
+   EXPIRY PICKER
+   =================================================== */
+.expiry-config { background: rgba(108,99,255,0.07); border: 1px solid rgba(108,99,255,0.2); border-radius: 8px; padding: 14px; margin-top: 10px; display: none; }
+.expiry-config.show { display: block; }
+
+/* ===================================================
+   SCAN SOUND TOGGLE
+   =================================================== */
+.sound-indicator { font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; transition: opacity 0.2s; }
+.sound-indicator:hover { opacity: 0.7; }
+
+/* Number counter animation */
+@keyframes countUp { from{transform:translateY(10px);opacity:0} to{transform:translateY(0);opacity:1} }
+.stat-num.updated { animation: countUp 0.4s ease; }
+</style>
+</head>
+<body>
+
+<!-- Scan Flash Overlay -->
+<div id="scan-flash" class="scan-flash"></div>
+
+<!-- ===================================================
+     SETUP SCREEN
+     =================================================== -->
+<div id="setup-screen">
+  <div class="setup-box">
+    <div style="font-size:42px;margin-bottom:10px">⚡</div>
+    <h1>ACCelerate'26</h1>
+    <p>QR-Based Participant Check-In / Check-Out System v2<br>Enter your Supabase credentials to connect</p>
+    <label>Supabase Project URL</label>
+    <input type="text" id="sb-url" placeholder="https://xxxxxxxx.supabase.co"/>
+    <label>Supabase Anon Key</label>
+    <input type="text" id="sb-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."/>
+    <button class="btn-connect" onclick="connectDB()">⚡ Connect &amp; Launch</button>
+    <button class="btn-demo" onclick="launchDemo()">🧪 Demo Mode (No Database Needed)</button>
+    <div id="setup-msg"></div>
+  </div>
+</div>
+
+<!-- ===================================================
+     MAIN APP
+     =================================================== -->
+<div id="app">
+  <div class="header">
+    <div>
+      <div class="header-title">⚡ ACCelerate'26</div>
+      <div class="header-sub">QR Check-In / Check-Out System v2</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="sound-indicator" id="sound-toggle" onclick="toggleSound()" title="Toggle scan sounds">🔊</span>
+      <span id="db-badge" class="db-badge db-demo">DEMO</span>
+    </div>
+  </div>
+
+  <div class="nav">
+    <button class="nav-btn active" onclick="showTab('register',this)">📝 Register</button>
+    <button class="nav-btn" onclick="showTab('scan',this)">📷 Scan QR</button>
+    <button class="nav-btn" onclick="showTab('dashboard',this)">📊 Dashboard</button>
+    <button class="nav-btn" onclick="showTab('logs',this)">📋 Logs</button>
+    <button class="nav-btn" onclick="showTab('attendance',this)">🗓 Attendance</button>
+    <button class="nav-btn" onclick="showTab('settings',this)">⚙️ Settings</button>
+  </div>
+
+  <div class="content">
+
+    <!-- ===================================================
+         TAB: REGISTER
+         =================================================== -->
+    <div class="tab active" id="tab-register">
+      <div class="card">
+        <div class="card-title">📝 Register New Participant</div>
+
+        <!-- Amity & Category Type -->
+        <div class="form-row">
+          <div>
+            <label>Are you associated with Amity University? *</label>
+            <div class="radio-group">
+              <label class="radio-label"><input type="radio" name="amity" value="Yes" checked onchange="calcFee()"> Yes</label>
+              <label class="radio-label"><input type="radio" name="amity" value="No" onchange="calcFee()"> No</label>
+            </div>
+          </div>
+          <div>
+            <label>Category Type *</label>
+            <div class="radio-group">
+              <label class="radio-label"><input type="radio" name="cattype" value="Student" checked onchange="calcFee()"> Student</label>
+              <label class="radio-label"><input type="radio" name="cattype" value="Faculty / Staff" onchange="calcFee()"> Faculty / Staff</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category & Gender -->
+        <div class="form-row">
+          <div>
+            <label>Category *</label>
+            <select id="r-category">
+              <option value="">-- Select Category --</option>
+              <option>Workshop</option><option>Seminar</option><option>Hackathon</option>
+              <option>Competition</option><option>General</option><option>VIP</option>
+              <option>Speaker</option><option>Volunteer</option><option>Organizer</option>
+            </select>
+          </div>
+          <div>
+            <label>Gender *</label>
+            <select id="r-gender">
+              <option value="">Select Gender</option>
+              <option>Male</option><option>Female</option><option>Other</option>
+              <option>Prefer not to say</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Name & Email -->
+        <div class="form-row">
+          <div><label>Name *</label><input type="text" id="r-name" placeholder="Full Name"/></div>
+          <div><label>Email ID *</label><input type="email" id="r-email" placeholder="email@example.com"/></div>
+        </div>
+
+        <!-- Mobile & Affiliation -->
+        <div class="form-row">
+          <div><label>Mobile No. *</label><input type="text" id="r-mobile" placeholder="+91 9876543210"/></div>
+          <div><label>Affiliation / Institute *</label><input type="text" id="r-affil" placeholder="College / University / Organization"/></div>
+        </div>
+
+        <!-- Designation & Address -->
+        <div class="form-row">
+          <div><label>Designation</label><input type="text" id="r-desig" placeholder="e.g. B.Tech 2nd Year, Professor"/></div>
+          <div><label>Address</label><input type="text" id="r-address" placeholder="City, State"/></div>
+        </div>
+
+        <hr class="div"/>
+
+        <!-- QR Security Options -->
+        <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">🔐 QR Security Options</div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">One-Time QR Mode</div>
+            <div class="toggle-sub">QR becomes invalid after first successful scan</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="opt-onetime" onchange="toggleExpiryConfig()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">QR Expiry Date/Time</div>
+            <div class="toggle-sub">QR automatically expires after set time</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="opt-expiry" onchange="toggleExpiryConfig()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="expiry-config" id="expiry-config">
+          <label>QR Expiry Date & Time</label>
+          <input type="datetime-local" id="r-expiry"/>
+        </div>
+
+        <hr class="div"/>
+
+        <!-- Fee Calculation -->
+        <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">💰 Fee Calculation (Auto)</div>
+        <div class="form-row triple">
+          <div><label>Amount (₹)</label><input type="text" id="r-amount" readonly/></div>
+          <div><label>GST Amount (₹)</label><input type="text" id="r-gst" readonly/></div>
+          <div><label>Payable Amount (₹)</label><input type="text" id="r-payable" readonly/></div>
+        </div>
+
+        <button class="btn btn-primary btn-full" id="reg-btn" onclick="registerParticipant()">
+          <span class="btn-label">🎫 Register &amp; Generate QR Code</span>
+        </button>
+      </div>
+
+      <!-- QR OUTPUT -->
+      <div id="qr-output">
+        <div id="qr-canvas"></div>
+
+        <!-- QR Status Badge -->
+        <div id="qr-status-badge" class="qr-status-badge qrs-active">
+          <span class="qrs-dot"></span>
+          <span id="qr-status-text">ACTIVE</span>
+        </div>
+        <br>
+        <div id="qr-info"></div>
+        <div id="qr-pid-display">
+          <span id="qr-pid-text"></span>
+          <button class="copy-btn" id="copy-id-btn" onclick="copyParticipantID()" title="Copy ID">📋 Copy</button>
+        </div>
+
+        <!-- Email Status -->
+        <div id="email-status-wrap" style="margin-bottom:10px"></div>
+
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px">📱 Print or share this QR with the participant</p>
+
+        <!-- Action Buttons -->
+        <div class="qr-actions">
+          <button class="btn btn-outline btn-sm" onclick="downloadQR()">⬇ Download QR</button>
+          <button class="btn btn-primary btn-sm" id="send-email-btn" onclick="sendQREmail()">📧 Send Email</button>
+          <button class="btn btn-yellow btn-sm" onclick="downloadParticipantPass()">🎫 Download Pass</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================
+         TAB: SCAN
+         =================================================== -->
+    <div class="tab" id="tab-scan">
+      <div class="card">
+        <div class="card-title">📷 QR Scanner</div>
+
+        <div class="form-row">
+          <div>
+            <label>Select Day</label>
+            <div class="day-tabs">
+              <button class="day-tab active" onclick="setDay(1,this)">Day 1</button>
+              <button class="day-tab" onclick="setDay(2,this)">Day 2</button>
+              <button class="day-tab" onclick="setDay(3,this)">Day 3</button>
+            </div>
+          </div>
+          <div>
+            <label>Mode</label>
+            <div class="mode-toggle">
+              <button class="mode-btn active-in" id="mode-in" onclick="setMode('checkin')">✅ Check IN</button>
+              <button class="mode-btn" id="mode-out" onclick="setMode('checkout')">🚪 Check OUT</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="scan-controls">
+          <button class="btn btn-primary" onclick="startScan()">📷 Start Camera</button>
+          <button class="btn btn-outline" onclick="stopScan()">⏹ Stop</button>
+        </div>
+
+        <div id="scanner-container"></div>
+
+        <!-- Cooldown bar -->
+        <div class="cooldown-bar-wrap" id="cooldown-bar-wrap">
+          <div class="cooldown-bar" id="cooldown-bar"></div>
+        </div>
+
+        <!-- Manual entry -->
+        <div class="manual-row">
+          <input type="text" id="manual-id"
+            placeholder="Or enter Participant ID or Token manually"
+            onkeydown="if(event.key==='Enter')manualCheckin()"/>
+          <button class="btn btn-success" onclick="manualCheckin()">Submit</button>
+        </div>
+
+        <!-- Scan result -->
+        <div id="scan-result"></div>
+      </div>
+    </div>
+
+    <!-- ===================================================
+         TAB: DASHBOARD
+         =================================================== -->
+    <div class="tab" id="tab-dashboard">
+      <div class="section-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="font-size:18px;font-weight:800">📊 Live Dashboard</div>
+          <span class="live-dot">LIVE</span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadDashboard()">🔄 Refresh</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card stat-purple"><div class="stat-num" id="d-total">0</div><div class="stat-label">Registered</div></div>
+        <div class="stat-card stat-green"><div class="stat-num" id="d-inside">0</div><div class="stat-label">Inside Now</div></div>
+        <div class="stat-card stat-red"><div class="stat-num" id="d-out">0</div><div class="stat-label">Checked Out</div></div>
+        <div class="stat-card stat-yellow"><div class="stat-num" id="d-scans">0</div><div class="stat-label">Total Scans</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Day-Wise Check-Ins</div>
+        <div class="stats-grid" style="margin-bottom:0">
+          <div class="stat-card">
+            <div class="stat-num" id="d-d1" style="color:var(--accent)">0</div>
+            <div class="stat-label">Day 1</div>
+            <div class="mini-bar-wrap" id="bar-d1"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="d-d2" style="color:var(--yellow)">0</div>
+            <div class="stat-label">Day 2</div>
+            <div class="mini-bar-wrap" id="bar-d2"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="d-d3" style="color:var(--green)">0</div>
+            <div class="stat-label">Day 3</div>
+            <div class="mini-bar-wrap" id="bar-d3"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recent Activity</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Category</th><th>Action</th><th>Day</th><th>QR Status</th><th>Time</th></tr></thead>
+            <tbody id="recent-tbody"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Click Refresh</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================
+         TAB: LOGS
+         =================================================== -->
+    <div class="tab" id="tab-logs">
+      <div class="section-header">
+        <div style="font-size:18px;font-weight:800">📋 Scan Logs</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="f-day" style="padding:7px 12px;font-size:12px;border-radius:8px" onchange="loadLogs()">
+            <option value="">All Days</option>
+            <option value="1">Day 1</option><option value="2">Day 2</option><option value="3">Day 3</option>
+          </select>
+          <select id="f-action" style="padding:7px 12px;font-size:12px;border-radius:8px" onchange="loadLogs()">
+            <option value="">All Actions</option>
+            <option value="checkin">Check-In</option><option value="checkout">Check-Out</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="loadLogs()">🔄 Refresh</button>
+          <button class="btn btn-success btn-sm" onclick="exportLogsCSV()">⬇ Export</button>
+          <button class="btn btn-primary btn-sm" onclick="showBulkEmailModal()" title="Send bulk emails to all visible participants">📧 Bulk Email</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Affiliation</th><th>Category</th><th>Action</th><th>Day</th><th>QR</th><th>Scan#</th><th>Time</th></tr></thead>
+            <tbody id="logs-tbody"><tr><td colspan="9" style="color:var(--muted);text-align:center;padding:20px">Click Refresh</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================
+         TAB: ATTENDANCE
+         =================================================== -->
+    <div class="tab" id="tab-attendance">
+      <div class="section-header">
+        <div style="font-size:18px;font-weight:800">🗓 Attendance Sheet</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="loadAttendance()">🔄 Refresh</button>
+          <button class="btn btn-success btn-sm" onclick="exportAttCSV()">⬇ Export</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Mobile</th><th>Affiliation</th>
+                <th>Category</th><th>Gender</th><th>Amity</th>
+                <th style="text-align:center">D1</th><th style="text-align:center">D2</th><th style="text-align:center">D3</th>
+                <th style="text-align:center">Total</th><th>Payable</th><th>QR Status</th><th>Email</th>
+              </tr>
+            </thead>
+            <tbody id="att-tbody"><tr><td colspan="14" style="color:var(--muted);text-align:center;padding:20px">Click Refresh</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================
+         TAB: SETTINGS
+         =================================================== -->
+    <div class="tab" id="tab-settings">
+      <div style="font-size:18px;font-weight:800;margin-bottom:20px">⚙️ Settings & Configuration</div>
+
+      <!-- EmailJS Settings -->
+      <div class="card">
+        <div class="card-title">📧 EmailJS Configuration</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+          Create a free account at <a href="https://emailjs.com" target="_blank" style="color:var(--accent)">emailjs.com</a>,
+          connect Gmail/Outlook, and create a template. Paste your credentials below.
+        </p>
+
+        <div class="settings-section">
+          <div class="settings-section-title">API Credentials</div>
+          <div class="form-row">
+            <div><label>EmailJS Public Key</label><input type="text" id="ejs-pubkey" placeholder="YOUR_PUBLIC_KEY"/></div>
+            <div><label>Service ID</label><input type="text" id="ejs-service" placeholder="service_xxxxxxx"/></div>
+          </div>
+          <div class="form-row single">
+            <div><label>Template ID</label><input type="text" id="ejs-template" placeholder="template_xxxxxxx"/></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Template Variables Reference</div>
+          <div style="background:var(--surface2);border-radius:8px;padding:14px;font-family:'Space Mono',monospace;font-size:12px;color:var(--muted);line-height:1.8">
+            Use these variables in your EmailJS template:<br>
+            <span style="color:var(--accent)">{{to_name}}</span> — Participant name<br>
+            <span style="color:var(--accent)">{{to_email}}</span> — Participant email<br>
+            <span style="color:var(--accent)">{{participant_id}}</span> — Participant ID (ACC-XXXX)<br>
+            <span style="color:var(--accent)">{{event_name}}</span> — ACCelerate'26<br>
+            <span style="color:var(--accent)">{{category}}</span> — Participant category<br>
+            <span style="color:var(--accent)">{{affiliation}}</span> — Institute/org<br>
+            <span style="color:var(--accent)">{{payable_amount}}</span> — Fee amount<br>
+            <span style="color:var(--accent)">{{qr_image_url}}</span> — QR code data URL<br>
+            <span style="color:var(--accent)">{{message}}</span> — Default message
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Test Email</div>
+          <div class="form-row">
+            <div><label>Test Email Address</label><input type="email" id="test-email" placeholder="test@example.com"/></div>
+            <div style="display:flex;align-items:flex-end">
+              <button class="btn btn-primary" style="width:100%" onclick="sendTestEmail()">📨 Send Test Email</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Bulk Email</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Send QR emails to all registered participants who haven't received one yet.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="sendBulkEmails()">📧 Send to Pending Participants</button>
+            <button class="btn btn-outline" onclick="sendBulkEmails(true)">📧 Send to ALL Participants</button>
+          </div>
+          <div id="bulk-progress" style="display:none;margin-top:14px">
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Sending emails... <span id="bulk-count">0/0</span></div>
+            <div style="height:6px;background:var(--surface2);border-radius:6px;overflow:hidden">
+              <div id="bulk-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;border-radius:6px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-success" onclick="saveEmailSettings()">💾 Save Settings</button>
+          <button class="btn btn-outline" onclick="loadEmailSettings()">↺ Load Saved</button>
+        </div>
+      </div>
+
+      <!-- QR Global Settings -->
+      <div class="card">
+        <div class="card-title">🔐 QR Security Defaults</div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Default to One-Time QR</div>
+            <div class="toggle-sub">New registrations use one-time QR by default</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-default-onetime">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Scan Cooldown Protection</div>
+            <div class="toggle-sub">Prevent rapid repeated scans (2 second cooldown)</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-cooldown" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Sound Effects</div>
+            <div class="toggle-sub">Play beep sounds on scan success/failure</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-sound" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Auto-send Email on Registration</div>
+            <div class="toggle-sub">Automatically email QR code after successful registration</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-autoemail" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <button class="btn btn-success" style="margin-top:14px" onclick="saveSecuritySettings()">💾 Save Settings</button>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<div id="toast"></div>
+
+<!-- ===================================================
+     JAVASCRIPT — MODULAR ARCHITECTURE
+     =================================================== -->
+<script>
+/* ===========================================================
+   MODULE: STATE
+   =========================================================== */
+const STATE = {
+  SB_URL: '',
+  SB_KEY: '',
+  IS_DEMO: false,
+  curDay: 1,
+  curMode: 'checkin',
+  scanner: null,
+  scanActive: false,
+  scanCooldown: false,        // Rapid-scan protection flag
+  soundEnabled: true,         // Sound effects
+  lastRegistered: null,       // Last registered participant data
+  // Demo in-memory stores
+  dPart: [],
+  dLogs: [],
+  dTokens: [],
+  // EmailJS config (loaded from localStorage)
+  ejsPublicKey: '',
+  ejsServiceID: '',
+  ejsTemplateID: '',
+  autoEmail: true,
+};
+
+/* ===========================================================
+   MODULE: FEE CALCULATION
+   =========================================================== */
+function calcFee() {
+  const amity   = document.querySelector('input[name="amity"]:checked')?.value || 'Yes';
+  const cattype = document.querySelector('input[name="cattype"]:checked')?.value || 'Student';
+  const fees = {
+    'Yes_Student':        { base: 200, gst: 0  },
+    'Yes_Faculty / Staff':{ base: 300, gst: 0  },
+    'No_Student':         { base: 500, gst: 18 },
+    'No_Faculty / Staff': { base: 800, gst: 18 }
+  };
+  const f = fees[`${amity}_${cattype}`] || { base: 0, gst: 0 };
+  const gstAmt = Math.round(f.base * f.gst / 100);
+  document.getElementById('r-amount').value  = '₹' + f.base;
+  document.getElementById('r-gst').value     = '₹' + gstAmt;
+  document.getElementById('r-payable').value = '₹' + (f.base + gstAmt);
+}
+calcFee(); // run on load
+
+/* ===========================================================
+   MODULE: SETUP / LAUNCH
+   =========================================================== */
+async function connectDB() {
+  const url = document.getElementById('sb-url').value.trim();
+  const key = document.getElementById('sb-key').value.trim();
+  const msg = document.getElementById('setup-msg');
+  if (!url || !key) { msg.className='msg-err'; msg.textContent='Please fill both fields.'; return; }
+  msg.textContent = 'Connecting...'; msg.className = '';
+  try {
+    const r = await fetch(`${url}/rest/v1/participants?limit=1`, {
+      headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' — Wrong URL or Key?');
+    STATE.SB_URL = url; STATE.SB_KEY = key; STATE.IS_DEMO = false;
+    msg.className = 'msg-ok'; msg.textContent = '✅ Connected!';
+    setTimeout(launch, 700);
+  } catch(e) { msg.className = 'msg-err'; msg.textContent = '❌ ' + e.message; }
+}
+
+function launchDemo() { STATE.IS_DEMO = true; launch(); }
+
+function launch() {
+  document.getElementById('setup-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  const b = document.getElementById('db-badge');
+  b.textContent = STATE.IS_DEMO ? 'DEMO MODE' : '● LIVE DB';
+  b.className = 'db-badge ' + (STATE.IS_DEMO ? 'db-demo' : 'db-live');
+  loadEmailSettings(); // restore saved EmailJS config
+  loadSecuritySettings(); // restore saved security config
+  loadDashboard();
+}
+
+/* ===========================================================
+   MODULE: SUPABASE REST API HELPERS
+   =========================================================== */
+async function sbGET(table, q = '') {
+  const r = await fetch(`${STATE.SB_URL}/rest/v1/${table}?${q}`, {
+    headers: { 'apikey': STATE.SB_KEY, 'Authorization': `Bearer ${STATE.SB_KEY}` }
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function sbPOST(table, data) {
+  const r = await fetch(`${STATE.SB_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'apikey': STATE.SB_KEY, 'Authorization': `Bearer ${STATE.SB_KEY}`,
+      'Content-Type': 'application/json', 'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function sbPATCH(table, query, data) {
+  const r = await fetch(`${STATE.SB_URL}/rest/v1/${table}?${query}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': STATE.SB_KEY, 'Authorization': `Bearer ${STATE.SB_KEY}`,
+      'Content-Type': 'application/json', 'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/* ===========================================================
+   MODULE: SECURE QR TOKEN GENERATION
+   =========================================================== */
+
+/**
+ * Generate a cryptographically secure random token.
+ * Uses crypto.getRandomValues for security.
+ */
+function generateSecureToken() {
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generate a short Participant ID (display only, NOT in QR).
+ */
+function genParticipantID() {
+  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = 'ACC-';
+  for (let i = 0; i < 4; i++) id += c[Math.floor(Math.random() * c.length)];
+  return id;
+}
+
+/* ===========================================================
+   MODULE: REGISTRATION
+   =========================================================== */
+async function registerParticipant() {
+  // --- Read form values ---
+  const amity    = document.querySelector('input[name="amity"]:checked')?.value || '';
+  const cattype  = document.querySelector('input[name="cattype"]:checked')?.value || '';
+  const category = document.getElementById('r-category').value;
+  const gender   = document.getElementById('r-gender').value;
+  const name     = document.getElementById('r-name').value.trim();
+  const email    = document.getElementById('r-email').value.trim();
+  const mobile   = document.getElementById('r-mobile').value.trim();
+  const affil    = document.getElementById('r-affil').value.trim();
+  const desig    = document.getElementById('r-desig').value.trim();
+  const address  = document.getElementById('r-address').value.trim();
+  const amount   = document.getElementById('r-amount').value;
+  const gst      = document.getElementById('r-gst').value;
+  const payable  = document.getElementById('r-payable').value;
+  const isOnetime = document.getElementById('opt-onetime').checked;
+  const hasExpiry = document.getElementById('opt-expiry').checked;
+  const expiryVal = document.getElementById('r-expiry').value;
+
+  // --- Validation ---
+  if (!name)                        { toast('Enter participant name', 'error'); return; }
+  if (!email || !email.includes('@')){ toast('Enter valid email', 'error'); return; }
+  if (!mobile)                      { toast('Enter mobile number', 'error'); return; }
+  if (!affil)                       { toast('Enter affiliation/institute', 'error'); return; }
+  if (!category)                    { toast('Select a category', 'error'); return; }
+  if (!gender)                      { toast('Select gender', 'error'); return; }
+  if (hasExpiry && !expiryVal)      { toast('Enter QR expiry date/time', 'error'); return; }
+
+  // --- Generate IDs & Token ---
+  const pid = genParticipantID();
+  const secureToken = generateSecureToken();
+  const qrType = isOnetime ? 'one-time' : 'reusable';
+  const expiresAt = hasExpiry ? new Date(expiryVal).toISOString() : null;
+
+  // --- Build payload ---
+  const participant = {
+    participant_id: pid,
+    name, email, mobile,
+    affiliation: affil, designation: desig, address,
+    gender, category,
+    category_type: cattype,
+    amity_associated: amity,
+    amount, gst_amount: gst, payable_amount: payable,
+    qr_token: secureToken,
+    qr_type: qrType,
+    qr_status: 'active',
+    qr_used: false,
+    last_scanned_at: null,
+    email_sent: false,
+    email_sent_at: null,
+    expires_at: expiresAt,
+  };
+
+  // --- Set button loading state ---
+  const btn = document.getElementById('reg-btn');
+  setButtonLoading(btn, true);
+
+  try {
+    if (STATE.IS_DEMO) {
+      if (STATE.dPart.find(x => x.email === email)) {
+        toast('Email already registered!', 'error');
+        setButtonLoading(btn, false);
+        return;
+      }
+      STATE.dPart.push({ ...participant, created_at: new Date().toISOString(), scan_count: 0 });
+      // Also store token record
+      STATE.dTokens.push({ token: secureToken, participant_id: pid, status: 'active', scan_count: 0, expires_at: expiresAt });
+    } else {
+      await sbPOST('participants', participant);
+    }
+
+    STATE.lastRegistered = participant;
+    toast(`✅ Registered! ID: ${pid}`, 'success');
+
+    // Generate and show QR
+    await showQR(pid, name, affil, category, secureToken, qrType, expiresAt);
+
+    // Auto-send email if configured
+    if (STATE.autoEmail && STATE.ejsPublicKey) {
+      sendQREmail(); // auto-send (non-blocking)
+    }
+
+    // Reset form
+    ['r-name','r-email','r-mobile','r-affil','r-desig','r-address'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('r-category').value = '';
+    document.getElementById('r-gender').value = '';
+    document.getElementById('r-expiry').value = '';
+    document.querySelector('input[name="amity"][value="Yes"]').checked = true;
+    document.querySelector('input[name="cattype"][value="Student"]').checked = true;
+    document.getElementById('opt-onetime').checked = false;
+    document.getElementById('opt-expiry').checked = false;
+    document.getElementById('expiry-config').classList.remove('show');
+    calcFee();
+
+  } catch(e) {
+    const m = e.message || '';
+    if (m.includes('23505') || m.includes('unique')) toast('Email already registered!', 'error');
+    else toast('Error: ' + m.substring(0, 100), 'error');
+  }
+
+  setButtonLoading(btn, false);
+}
+
+/* ===========================================================
+   MODULE: QR DISPLAY
+   =========================================================== */
+async function showQR(pid, name, affil, category, token, qrType, expiresAt) {
+  const box = document.getElementById('qr-output');
+  box.style.display = 'block';
+  document.getElementById('qr-info').textContent = `${name} — ${affil}`;
+
+  // Display participant ID with copy button
+  document.getElementById('qr-pid-text').textContent = `ID: ${pid}  |  ${category}  |  ${qrType === 'one-time' ? '🔒 One-Time' : '🔄 Reusable'}`;
+
+  // QR Status Badge
+  const badge = document.getElementById('qr-status-badge');
+  badge.className = 'qr-status-badge qrs-active';
+  document.getElementById('qr-status-text').textContent = 'ACTIVE';
+  if (expiresAt) {
+    document.getElementById('qr-status-text').textContent = `ACTIVE — Expires ${new Date(expiresAt).toLocaleString()}`;
+  }
+
+  // Generate QR code — payload is SECURE TOKEN, not participant ID
+  document.getElementById('qr-canvas').innerHTML = '';
+  new QRCode(document.getElementById('qr-canvas'), {
+    text: JSON.stringify({
+      token,              // secure random token
+      event: 'ACCelerate26',
+      // Note: No participant_id here for security
+    }),
+    width: 220, height: 220,
+    colorDark: '#ffffff',
+    colorLight: '#1c1c28'
+  });
+
+  document.getElementById('email-status-wrap').innerHTML = '';
+}
+
+function downloadQR() {
+  const c = document.querySelector('#qr-canvas canvas');
+  if (!c) return;
+  const pid = STATE.lastRegistered?.participant_id || 'QR';
+  const a = document.createElement('a');
+  a.download = `QR-${pid}.png`;
+  a.href = c.toDataURL();
+  a.click();
+}
+
+function copyParticipantID() {
+  const pid = STATE.lastRegistered?.participant_id || '';
+  if (!pid) return;
+  navigator.clipboard.writeText(pid).then(() => {
+    const btn = document.getElementById('copy-id-btn');
+    btn.textContent = '✅ Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '📋 Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function toggleExpiryConfig() {
+  const show = document.getElementById('opt-expiry').checked;
+  document.getElementById('expiry-config').classList.toggle('show', show);
+}
+
+/* ===========================================================
+   MODULE: EMAIL
+   =========================================================== */
+
+/**
+ * Initialize EmailJS with the stored public key.
+ */
+function initEmailJS() {
+  if (STATE.ejsPublicKey) {
+    emailjs.init({ publicKey: STATE.ejsPublicKey });
+  }
+}
+
+/**
+ * Get the QR canvas as a base64 data URL.
+ */
+function getQRDataURL() {
+  const canvas = document.querySelector('#qr-canvas canvas');
+  return canvas ? canvas.toDataURL('image/png') : '';
+}
+
+/**
+ * Send QR code email to the last registered participant.
+ * Called automatically after registration or manually via button.
+ */
+async function sendQREmail(overrideData) {
+  const p = overrideData || STATE.lastRegistered;
+  if (!p) { toast('No participant data found', 'error'); return; }
+
+  if (!STATE.ejsPublicKey || !STATE.ejsServiceID || !STATE.ejsTemplateID) {
+    toast('⚠️ Configure EmailJS in Settings first', 'warning');
+    return;
+  }
+
+  // Show sending state
+  setEmailStatus('sending');
+  const btn = document.getElementById('send-email-btn');
+  if (btn) setButtonLoading(btn, true);
+
+  try {
+    initEmailJS();
+    const qrImageUrl = getQRDataURL();
+
+    const templateParams = {
+      to_name:         p.name,
+      to_email:        p.email,
+      participant_id:  p.participant_id,
+      event_name:      "ACCelerate'26",
+      category:        p.category || '',
+      affiliation:     p.affiliation || '',
+      payable_amount:  p.payable_amount || '—',
+      qr_image_url:    qrImageUrl,
+      message:         "Thank you for registering for ACCelerate'26. Your QR code is attached below. Please carry this QR during the event for entry and attendance tracking.",
+    };
+
+    await emailjs.send(STATE.ejsServiceID, STATE.ejsTemplateID, templateParams);
+
+    // Update DB record
+    if (!STATE.IS_DEMO) {
+      await sbPATCH('participants', `participant_id=eq.${p.participant_id}`, {
+        email_sent: true,
+        email_sent_at: new Date().toISOString()
+      });
+    } else {
+      const dp = STATE.dPart.find(x => x.participant_id === p.participant_id);
+      if (dp) { dp.email_sent = true; dp.email_sent_at = new Date().toISOString(); }
+    }
+
+    setEmailStatus('sent');
+    toast('📧 Email sent successfully!', 'success');
+  } catch(e) {
+    console.error('Email send error:', e);
+    setEmailStatus('failed');
+    toast('❌ Email failed: ' + (e.text || e.message || 'Unknown error'), 'error');
+  }
+
+  if (btn) setButtonLoading(btn, false);
+}
+
+function setEmailStatus(status) {
+  const wrap = document.getElementById('email-status-wrap');
+  if (!wrap) return;
+  const map = {
+    sending: `<div class="email-status email-sending"><div class="email-spinner"></div> Sending email...</div>`,
+    sent:    `<div class="email-status email-sent">✅ Email sent successfully</div>`,
+    failed:  `<div class="email-status email-failed">❌ Email delivery failed — check Settings</div>`,
+  };
+  wrap.innerHTML = map[status] || '';
+}
+
+/**
+ * Send test email to verify EmailJS config.
+ */
+async function sendTestEmail() {
+  const testAddr = document.getElementById('test-email').value.trim();
+  if (!testAddr) { toast('Enter a test email address', 'error'); return; }
+  if (!STATE.ejsPublicKey) { toast('Save EmailJS settings first', 'error'); return; }
+
+  initEmailJS();
+  try {
+    await emailjs.send(STATE.ejsServiceID, STATE.ejsTemplateID, {
+      to_name:        'Test User',
+      to_email:       testAddr,
+      participant_id: 'ACC-TEST',
+      event_name:     "ACCelerate'26",
+      category:       'General',
+      affiliation:    'Test Institute',
+      payable_amount: '₹200',
+      qr_image_url:   '',
+      message:        "This is a test email from ACCelerate'26 system. If you received this, EmailJS is configured correctly!",
+    });
+    toast('📧 Test email sent!', 'success');
+  } catch(e) {
+    toast('❌ Test failed: ' + (e.text || e.message), 'error');
+  }
+}
+
+/**
+ * Bulk email: send QR emails to all (or pending) participants.
+ */
+async function sendBulkEmails(sendAll = false) {
+  if (!STATE.ejsPublicKey) { toast('Configure EmailJS in Settings first', 'warning'); return; }
+
+  let participants;
+  try {
+    if (STATE.IS_DEMO) {
+      participants = sendAll ? STATE.dPart : STATE.dPart.filter(p => !p.email_sent);
+    } else {
+      const q = sendAll ? 'select=*' : 'select=*&email_sent=eq.false';
+      participants = await sbGET('participants', q);
+    }
+  } catch(e) { toast('Error loading participants: ' + e.message, 'error'); return; }
+
+  if (!participants.length) { toast('No participants to email', 'info'); return; }
+
+  const total = participants.length;
+  const prog = document.getElementById('bulk-progress');
+  const countEl = document.getElementById('bulk-count');
+  const barEl = document.getElementById('bulk-bar');
+  prog.style.display = 'block';
+  let done = 0;
+
+  initEmailJS();
+
+  for (const p of participants) {
+    countEl.textContent = `${done}/${total}`;
+    barEl.style.width = `${(done / total) * 100}%`;
+    try {
+      await emailjs.send(STATE.ejsServiceID, STATE.ejsTemplateID, {
+        to_name:        p.name,
+        to_email:       p.email,
+        participant_id: p.participant_id,
+        event_name:     "ACCelerate'26",
+        category:       p.category || '',
+        affiliation:    p.affiliation || '',
+        payable_amount: p.payable_amount || '',
+        qr_image_url:   '',  // No canvas available in bulk
+        message:        "Thank you for registering for ACCelerate'26. Your QR code is attached below. Please carry this QR during the event for entry and attendance tracking.",
+      });
+      if (!STATE.IS_DEMO) {
+        await sbPATCH('participants', `participant_id=eq.${p.participant_id}`, {
+          email_sent: true, email_sent_at: new Date().toISOString()
+        });
+      } else {
+        const dp = STATE.dPart.find(x => x.participant_id === p.participant_id);
+        if (dp) { dp.email_sent = true; dp.email_sent_at = new Date().toISOString(); }
+      }
+      // Rate-limit courtesy delay
+      await new Promise(r => setTimeout(r, 1200));
+    } catch(e) {
+      console.warn(`Email failed for ${p.email}:`, e);
+    }
+    done++;
+  }
+
+  countEl.textContent = `${done}/${total}`;
+  barEl.style.width = '100%';
+  toast(`📧 Bulk email done: ${done}/${total}`, 'success');
+  setTimeout(() => { prog.style.display = 'none'; }, 3000);
+}
+
+function showBulkEmailModal() {
+  showTab('settings', document.querySelectorAll('.nav-btn')[5]);
+  toast('Use "Bulk Email" section in Settings', 'info');
+}
+
+/* ===========================================================
+   MODULE: SETTINGS PERSISTENCE
+   =========================================================== */
+function saveEmailSettings() {
+  STATE.ejsPublicKey  = document.getElementById('ejs-pubkey').value.trim();
+  STATE.ejsServiceID  = document.getElementById('ejs-service').value.trim();
+  STATE.ejsTemplateID = document.getElementById('ejs-template').value.trim();
+  localStorage.setItem('acc26_ejs', JSON.stringify({
+    pk: STATE.ejsPublicKey, svc: STATE.ejsServiceID, tpl: STATE.ejsTemplateID
+  }));
+  toast('💾 Email settings saved', 'success');
+}
+
+function loadEmailSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('acc26_ejs') || '{}');
+    STATE.ejsPublicKey  = s.pk  || '';
+    STATE.ejsServiceID  = s.svc || '';
+    STATE.ejsTemplateID = s.tpl || '';
+    document.getElementById('ejs-pubkey').value   = STATE.ejsPublicKey;
+    document.getElementById('ejs-service').value   = STATE.ejsServiceID;
+    document.getElementById('ejs-template').value  = STATE.ejsTemplateID;
+  } catch(e) {}
+}
+
+function saveSecuritySettings() {
+  const s = {
+    defaultOnetime: document.getElementById('setting-default-onetime').checked,
+    cooldown:       document.getElementById('setting-cooldown').checked,
+    sound:          document.getElementById('setting-sound').checked,
+    autoEmail:      document.getElementById('setting-autoemail').checked,
+  };
+  STATE.soundEnabled = s.sound;
+  STATE.autoEmail    = s.autoEmail;
+  localStorage.setItem('acc26_sec', JSON.stringify(s));
+  document.getElementById('sound-toggle').textContent = s.sound ? '🔊' : '🔇';
+  toast('💾 Security settings saved', 'success');
+}
+
+function loadSecuritySettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('acc26_sec') || '{}');
+    if (s.defaultOnetime !== undefined) {
+      document.getElementById('setting-default-onetime').checked = s.defaultOnetime;
+      document.getElementById('opt-onetime').checked = s.defaultOnetime;
+    }
+    if (s.cooldown !== undefined) document.getElementById('setting-cooldown').checked = s.cooldown;
+    if (s.sound !== undefined) {
+      document.getElementById('setting-sound').checked = s.sound;
+      STATE.soundEnabled = s.sound;
+      document.getElementById('sound-toggle').textContent = s.sound ? '🔊' : '🔇';
+    }
+    if (s.autoEmail !== undefined) {
+      document.getElementById('setting-autoemail').checked = s.autoEmail;
+      STATE.autoEmail = s.autoEmail;
+    }
+  } catch(e) {}
+}
+
+function toggleSound() {
+  STATE.soundEnabled = !STATE.soundEnabled;
+  document.getElementById('sound-toggle').textContent = STATE.soundEnabled ? '🔊' : '🔇';
+  document.getElementById('setting-sound').checked = STATE.soundEnabled;
+  const s = JSON.parse(localStorage.getItem('acc26_sec') || '{}');
+  s.sound = STATE.soundEnabled;
+  localStorage.setItem('acc26_sec', JSON.stringify(s));
+  toast(STATE.soundEnabled ? '🔊 Sound ON' : '🔇 Sound OFF', 'info');
+}
+
+/* ===========================================================
+   MODULE: NAVIGATION
+   =========================================================== */
+function showTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  el.classList.add('active');
+  stopScan();
+  if (name === 'dashboard')  loadDashboard();
+  if (name === 'logs')       loadLogs();
+  if (name === 'attendance') loadAttendance();
+}
+
+/* ===========================================================
+   MODULE: SCAN & QR VALIDATION
+   =========================================================== */
+function setDay(d, el) {
+  STATE.curDay = d;
+  document.querySelectorAll('.day-tab').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function setMode(m) {
+  STATE.curMode = m;
+  document.getElementById('mode-in').className  = 'mode-btn' + (m === 'checkin'  ? ' active-in'  : '');
+  document.getElementById('mode-out').className = 'mode-btn' + (m === 'checkout' ? ' active-out' : '');
+}
+
+function startScan() {
+  if (STATE.scanActive) return;
+  document.getElementById('scanner-container').innerHTML = '';
+  STATE.scanner = new Html5Qrcode('scanner-container');
+  STATE.scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    text => {
+      // Rapid scan protection
+      if (STATE.scanCooldown) return;
+      processQR(text);
+    },
+    () => {}
+  )
+  .then(() => { STATE.scanActive = true; })
+  .catch(e => toast('Camera error: ' + e, 'error'));
+}
+
+function stopScan() {
+  if (STATE.scanner && STATE.scanActive) {
+    STATE.scanner.stop().catch(() => {});
+    STATE.scanActive = false;
+  }
+}
+
+async function manualCheckin() {
+  const raw = document.getElementById('manual-id').value.trim().toUpperCase();
+  if (!raw) { toast('Enter Participant ID or Token', 'error'); return; }
+  // Try to resolve whether input is a token or participant ID
+  await processCheckin(raw);
+  document.getElementById('manual-id').value = '';
+}
+
+/**
+ * Process a raw QR scan text.
+ * Supports:
+ *  - New secure format: { token: "...", event: "ACCelerate26" }
+ *  - Legacy format: { participant_id: "ACC-XXXX", ... }
+ *  - Plain text ACC-XXXX
+ */
+async function processQR(text) {
+  stopScan();
+  let token = null;
+  let legacyPid = null;
+
+  try {
+    const obj = JSON.parse(text);
+
+    // Security check: validate event field to prevent fake QRs
+    if (obj.event && obj.event !== 'ACCelerate26') {
+      showScanResult(false, '❌ Invalid QR — Wrong Event', '');
+      playScanSound(false);
+      flashScreen(false);
+      triggerCooldown();
+      return;
+    }
+
+    if (obj.token) {
+      token = obj.token;
+    } else if (obj.participant_id) {
+      // Legacy QR support
+      legacyPid = obj.participant_id.toUpperCase();
+    }
+  } catch(e) {
+    // Plain text — treat as participant ID or token
+    legacyPid = text.trim().toUpperCase();
+  }
+
+  await processCheckin(token || legacyPid, !!token);
+}
+
+/**
+ * Core check-in/out processor.
+ * - Validates secure token if isToken=true
+ * - Falls back to participant ID lookup for legacy/manual
+ */
+async function processCheckin(identifier, isToken = false) {
+  if (STATE.scanCooldown) {
+    toast('⏳ Please wait before scanning again', 'warning');
+    return;
+  }
+
+  try {
+    let participant = null;
+    let tokenRecord = null;
+
+    // === TOKEN VALIDATION (new secure mode) ===
+    if (isToken || (identifier && identifier.length > 10 && !identifier.startsWith('ACC-'))) {
+      const resolvedToken = identifier.toLowerCase();
+
+      if (STATE.IS_DEMO) {
+        tokenRecord = STATE.dTokens.find(t => t.token === resolvedToken);
+        if (tokenRecord) {
+          participant = STATE.dPart.find(p => p.participant_id === tokenRecord.participant_id);
+        }
+      } else {
+        const recs = await sbGET('participants', `qr_token=eq.${resolvedToken}&select=*`);
+        if (recs && recs[0]) {
+          participant = recs[0];
+          tokenRecord = { token: resolvedToken, status: participant.qr_status, scan_count: participant.scan_count || 0, expires_at: participant.expires_at };
+        }
+      }
+
+      if (!participant) {
+        showScanResult(false, '⚠️ Invalid QR Token', '');
+        playScanSound(false); flashScreen(false); triggerCooldown();
+        return;
+      }
+
+      // Check expiry
+      if (tokenRecord.expires_at && new Date(tokenRecord.expires_at) < new Date()) {
+        showScanResult(false, '⌛ Expired QR Code', participant.name, participant.affiliation);
+        playScanSound(false); flashScreen(false); triggerCooldown();
+        return;
+      }
+
+      // Check one-time QR status
+      if (participant.qr_type === 'one-time' && participant.qr_used) {
+        showScanResult(false, '🚫 QR Already Used', participant.name, participant.affiliation, participant.qr_used_at);
+        playScanSound(false); flashScreen(false); triggerCooldown();
+        return;
+      }
+
+      // Check qr_status field
+      if (participant.qr_status === 'expired') {
+        showScanResult(false, '⌛ Expired QR', participant.name, participant.affiliation);
+        playScanSound(false); flashScreen(false); triggerCooldown();
+        return;
+      }
+
+    } else {
+      // === LEGACY: Participant ID lookup ===
+      const pid = identifier.toUpperCase();
+      if (STATE.IS_DEMO) {
+        participant = STATE.dPart.find(x => x.participant_id === pid);
+      } else {
+        const d = await sbGET('participants', `participant_id=eq.${pid}&select=*`);
+        participant = d && d[0];
+      }
+
+      if (!participant) {
+        showScanResult(false, `ID Not Found: ${pid}`, '');
+        playScanSound(false); flashScreen(false); triggerCooldown();
+        toast('Participant not found!', 'error');
+        return;
+      }
+    }
+
+    // === CHECK DUPLICATE SCAN ===
+    let alreadyDone = false;
+    if (STATE.IS_DEMO) {
+      alreadyDone = STATE.dLogs.some(l =>
+        l.participant_id === participant.participant_id &&
+        l.day_number === STATE.curDay &&
+        l.action_type === STATE.curMode
+      );
+    } else {
+      const ex = await sbGET('checkin_logs',
+        `participant_id=eq.${participant.participant_id}&day_number=eq.${STATE.curDay}&action_type=eq.${STATE.curMode}`
+      );
+      alreadyDone = ex && ex.length > 0;
+    }
+
+    if (alreadyDone) {
+      const actionLabel = STATE.curMode === 'checkin' ? 'Checked IN' : 'Checked OUT';
+      showScanResult(false, `⚠️ Already ${actionLabel} on Day ${STATE.curDay}`, participant.name, participant.affiliation);
+      playScanSound(false); flashScreen(false); triggerCooldown();
+      toast('Already done for this day!', 'error');
+      return;
+    }
+
+    // === SUCCESS — RECORD LOG ===
+    const logEntry = {
+      participant_id: participant.participant_id,
+      action_type: STATE.curMode,
+      day_number: STATE.curDay,
+      scanned_by: 'Admin',
+      qr_status_at_scan: participant.qr_status || 'active',
+      created_at: new Date().toISOString()
+    };
+
+    if (STATE.IS_DEMO) {
+      STATE.dLogs.push(logEntry);
+      // Update one-time QR status
+      const dp = STATE.dPart.find(p => p.participant_id === participant.participant_id);
+      if (dp && dp.qr_type === 'one-time') {
+        dp.qr_used = true;
+        dp.qr_status = 'used';
+        dp.last_scanned_at = new Date().toISOString();
+        dp.scan_count = (dp.scan_count || 0) + 1;
+      } else if (dp) {
+        dp.last_scanned_at = new Date().toISOString();
+        dp.scan_count = (dp.scan_count || 0) + 1;
+      }
+      // Update demo token record
+      const dt = STATE.dTokens.find(t => t.token === participant.qr_token);
+      if (dt) { dt.scan_count++; if (participant.qr_type === 'one-time') dt.status = 'used'; }
+    } else {
+      await sbPOST('checkin_logs', logEntry);
+      // Update participant QR state
+      const updateData = {
+        last_scanned_at: new Date().toISOString(),
+        scan_count: (participant.scan_count || 0) + 1,
+      };
+      if (participant.qr_type === 'one-time') {
+        updateData.qr_used = true;
+        updateData.qr_status = 'used';
+        updateData.qr_used_at = new Date().toISOString();
+        updateData.qr_used_by = 'Admin';
+      }
+      await sbPATCH('participants', `participant_id=eq.${participant.participant_id}`, updateData);
+    }
+
+    const act = STATE.curMode === 'checkin' ? '✅ Checked IN' : '🚪 Checked OUT';
+    showScanResult(
+      true,
+      `${act} — Day ${STATE.curDay}`,
+      participant.name,
+      participant.affiliation,
+      participant.category,
+      participant.qr_type
+    );
+    playScanSound(true);
+    flashScreen(true);
+    toast(`${act}: ${participant.name}`, 'success');
+
+  } catch(e) {
+    showScanResult(false, 'Error: ' + (e.message || '').substring(0, 60), '');
+    toast('Processing error!', 'error');
+  }
+
+  triggerCooldown();
+}
+
+/**
+ * Show the animated scan result card.
+ */
+function showScanResult(ok, action, name, affil = '', catOrDetail = '', qrType = '') {
+  const el = document.getElementById('scan-result');
+  el.style.display = 'block';
+
+  const color = ok ? 'var(--green)' : 'var(--accent2)';
+  const icon  = ok ? '✅' : '❌';
+  const cls   = ok ? 'success-result' : 'error-result';
+
+  let qrBadge = '';
+  if (ok && qrType === 'one-time') {
+    qrBadge = `<div class="result-qr-badge"><span class="badge badge-used">🔒 ONE-TIME — NOW USED</span></div>`;
+  } else if (ok && qrType === 'reusable') {
+    qrBadge = `<div class="result-qr-badge"><span class="badge badge-active">🔄 REUSABLE</span></div>`;
+  }
+
+  el.className = cls;
+  el.innerHTML = `
+    <span class="result-icon">${icon}</span>
+    <div class="result-name" style="color:${color}">${name || action}</div>
+    ${name ? `<div class="result-detail">${action}</div>` : ''}
+    ${affil  ? `<div class="result-detail">${affil}${catOrDetail ? ' &bull; ' + catOrDetail : ''}</div>` : ''}
+    ${qrBadge}
+  `;
+
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+/**
+ * Flash the screen green/red on scan.
+ */
+function flashScreen(success) {
+  const flash = document.getElementById('scan-flash');
+  flash.className = 'scan-flash ' + (success ? 'green-flash' : 'red-flash');
+  flash.classList.add('show');
+  setTimeout(() => { flash.classList.remove('show'); }, 300);
+}
+
+/**
+ * Trigger scan cooldown to prevent rapid repeated scans.
+ */
+function triggerCooldown() {
+  const useCooldown = document.getElementById('setting-cooldown')?.checked !== false;
+  if (!useCooldown) return;
+  STATE.scanCooldown = true;
+  const wrap = document.getElementById('cooldown-bar-wrap');
+  const bar  = document.getElementById('cooldown-bar');
+  wrap.style.display = 'block';
+  bar.style.animation = 'none';
+  bar.offsetHeight; // reflow
+  bar.style.animation = `cooldown 2s linear forwards`;
+  setTimeout(() => {
+    STATE.scanCooldown = false;
+    wrap.style.display = 'none';
+  }, 2000);
+}
+
+/* ===========================================================
+   MODULE: SOUND EFFECTS (Web Audio API)
+   =========================================================== */
+function playScanSound(success) {
+  if (!STATE.soundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (success) {
+      // Pleasant two-tone success beep
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } else {
+      // Low error buzz
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, ctx.currentTime);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    }
+  } catch(e) { /* Audio not supported */ }
+}
+
+/* ===========================================================
+   MODULE: DASHBOARD
+   =========================================================== */
+async function loadDashboard() {
+  try {
+    let parts, logs;
+    if (STATE.IS_DEMO) {
+      parts = STATE.dPart;
+      logs  = STATE.dLogs;
+    } else {
+      [parts, logs] = await Promise.all([
+        sbGET('participants', 'select=participant_id,qr_status,scan_count'),
+        sbGET('checkin_logs', 'select=*&order=created_at.desc')
+      ]);
+    }
+
+    const allLogs = logs || [];
+
+    // Determine who is currently inside (last action = checkin)
+    const lastAction = {};
+    [...allLogs].reverse().forEach(l => {
+      if (!lastAction[l.participant_id]) lastAction[l.participant_id] = l.action_type;
+    });
+
+    animateStat('d-total',  (parts || []).length);
+    animateStat('d-inside', Object.values(lastAction).filter(a => a === 'checkin').length);
+    animateStat('d-out',    Object.values(lastAction).filter(a => a === 'checkout').length);
+    animateStat('d-scans',  allLogs.length);
+
+    const d1Count = allLogs.filter(l => l.day_number == 1 && l.action_type === 'checkin').length;
+    const d2Count = allLogs.filter(l => l.day_number == 2 && l.action_type === 'checkin').length;
+    const d3Count = allLogs.filter(l => l.day_number == 3 && l.action_type === 'checkin').length;
+
+    animateStat('d-d1', d1Count);
+    animateStat('d-d2', d2Count);
+    animateStat('d-d3', d3Count);
+
+    // Mini bar charts (hourly breakdown)
+    renderMiniBar('bar-d1', allLogs.filter(l => l.day_number == 1 && l.action_type === 'checkin'));
+    renderMiniBar('bar-d2', allLogs.filter(l => l.day_number == 2 && l.action_type === 'checkin'));
+    renderMiniBar('bar-d3', allLogs.filter(l => l.day_number == 3 && l.action_type === 'checkin'));
+
+    // Recent activity
+    let recent;
+    if (STATE.IS_DEMO) {
+      recent = [...STATE.dLogs].reverse().slice(0, 10);
+    } else {
+      recent = await sbGET('checkin_logs', 'select=*,participants(name,category,qr_status)&order=created_at.desc&limit=10');
+    }
+
+    const tb = document.getElementById('recent-tbody');
+    if (!recent || !recent.length) {
+      tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">No activity yet</td></tr>';
+      return;
+    }
+
+    tb.innerHTML = recent.map(l => {
+      let name = '', cat = '', qrSt = '';
+      if (STATE.IS_DEMO) {
+        const p = STATE.dPart.find(x => x.participant_id === l.participant_id);
+        name = p?.name || ''; cat = p?.category || ''; qrSt = p?.qr_status || 'active';
+      } else {
+        name = l.participants?.name || ''; cat = l.participants?.category || '';
+        qrSt = l.participants?.qr_status || 'active';
+      }
+      const qrBadge = qrSt === 'used'
+        ? `<span class="badge badge-used">USED</span>`
+        : `<span class="badge badge-active">ACTIVE</span>`;
+      return `<tr>
+        <td style="font-weight:600">${name}</td>
+        <td><span class="badge badge-d1" style="font-size:10px">${cat}</span></td>
+        <td><span class="badge ${l.action_type === 'checkin' ? 'badge-in' : 'badge-out'}">${l.action_type === 'checkin' ? 'CHECK IN' : 'CHECK OUT'}</span></td>
+        <td><span class="badge badge-d${l.day_number}">Day ${l.day_number}</span></td>
+        <td>${qrBadge}</td>
+        <td style="color:var(--muted);font-size:12px">${new Date(l.created_at).toLocaleTimeString()}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { toast('Dashboard error: ' + e.message, 'error'); }
+}
+
+/**
+ * Render mini bar chart from log entries.
+ */
+function renderMiniBar(id, logs) {
+  const el = document.getElementById(id);
+  if (!el || !logs.length) { if (el) el.innerHTML = ''; return; }
+  // Group by hour
+  const hours = {};
+  logs.forEach(l => {
+    const h = new Date(l.created_at).getHours();
+    hours[h] = (hours[h] || 0) + 1;
+  });
+  const maxVal = Math.max(...Object.values(hours), 1);
+  const sorted = Object.keys(hours).sort((a,b) => a-b).slice(-8);
+  el.innerHTML = sorted.map(h => {
+    const pct = Math.round((hours[h] / maxVal) * 100);
+    return `<div class="mini-bar" style="height:${Math.max(pct, 5)}%" title="${hours[h]} at ${h}:00"></div>`;
+  }).join('');
+}
+
+/**
+ * Animate stat number update.
+ */
+function animateStat(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.classList.remove('updated');
+  void el.offsetWidth;
+  el.classList.add('updated');
+}
+
+/* ===========================================================
+   MODULE: LOGS
+   =========================================================== */
+async function loadLogs() {
+  try {
+    const fd = document.getElementById('f-day').value;
+    const fa = document.getElementById('f-action').value;
+    let data;
+
+    if (STATE.IS_DEMO) {
+      data = STATE.dLogs.filter(l => {
+        if (fd && l.day_number != fd) return false;
+        if (fa && l.action_type !== fa) return false;
+        return true;
+      }).slice().reverse();
+    } else {
+      let q = 'select=*,participants(name,affiliation,category,qr_status,scan_count)&order=created_at.desc&limit=500';
+      if (fd) q += `&day_number=eq.${fd}`;
+      if (fa) q += `&action_type=eq.${fa}`;
+      data = await sbGET('checkin_logs', q);
+    }
+
+    const tb = document.getElementById('logs-tbody');
+    if (!data || !data.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted);text-align:center;padding:20px">No logs found</td></tr>';
+      return;
+    }
+
+    tb.innerHTML = data.map(l => {
+      let name='', affil='', cat='', qrSt='active', scanCnt=0;
+      if (STATE.IS_DEMO) {
+        const p = STATE.dPart.find(x => x.participant_id === l.participant_id);
+        name=p?.name||''; affil=p?.affiliation||''; cat=p?.category||'';
+        qrSt=p?.qr_status||'active'; scanCnt=p?.scan_count||0;
+      } else {
+        name=l.participants?.name||''; affil=l.participants?.affiliation||'';
+        cat=l.participants?.category||''; qrSt=l.participants?.qr_status||'active';
+        scanCnt=l.participants?.scan_count||0;
+      }
+      const qrBadge = qrSt === 'used'
+        ? `<span class="badge badge-used">USED</span>`
+        : qrSt === 'expired'
+        ? `<span class="badge badge-expd">EXPIRED</span>`
+        : `<span class="badge badge-active">ACTIVE</span>`;
+      return `<tr>
+        <td><span class="pid-tag">${l.participant_id}</span></td>
+        <td style="font-weight:600">${name}</td>
+        <td style="font-size:12px;color:var(--muted)">${affil}</td>
+        <td><span class="badge badge-d1" style="font-size:10px">${cat}</span></td>
+        <td><span class="badge ${l.action_type === 'checkin' ? 'badge-in' : 'badge-out'}">${l.action_type === 'checkin' ? 'CHECK IN' : 'CHECK OUT'}</span></td>
+        <td><span class="badge badge-d${l.day_number}">Day ${l.day_number}</span></td>
+        <td>${qrBadge}</td>
+        <td style="text-align:center;font-family:'Space Mono',monospace;font-size:12px;color:var(--muted)">${scanCnt}</td>
+        <td style="color:var(--muted);font-size:12px">${new Date(l.created_at).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { toast('Logs error: ' + e.message, 'error'); }
+}
+
+/* ===========================================================
+   MODULE: ATTENDANCE
+   =========================================================== */
+async function loadAttendance() {
+  try {
+    let parts, logs;
+    if (STATE.IS_DEMO) {
+      parts = STATE.dPart;
+      logs  = STATE.dLogs;
+    } else {
+      [parts, logs] = await Promise.all([
+        sbGET('participants', 'select=*&order=created_at.asc'),
+        sbGET('checkin_logs', 'select=participant_id,day_number,action_type')
+      ]);
+    }
+
+    const tb = document.getElementById('att-tbody');
+    if (!parts || !parts.length) {
+      tb.innerHTML = '<tr><td colspan="14" style="color:var(--muted);text-align:center;padding:20px">No participants yet</td></tr>';
+      return;
+    }
+
+    tb.innerHTML = parts.map(p => {
+      const pLogs = (logs || []).filter(l => l.participant_id === p.participant_id && l.action_type === 'checkin');
+      const d1 = pLogs.some(l => l.day_number == 1);
+      const d2 = pLogs.some(l => l.day_number == 2);
+      const d3 = pLogs.some(l => l.day_number == 3);
+      const tot = [d1, d2, d3].filter(Boolean).length;
+      const dot = ok => `<td style="text-align:center"><span class="att-dot ${ok ? 'att-yes' : 'att-no'}">${ok ? '✓' : '–'}</span></td>`;
+
+      // QR Status badge
+      const qrSt = p.qr_status || 'active';
+      const qrBadge = qrSt === 'used'
+        ? `<span class="badge badge-used">USED</span>`
+        : qrSt === 'expired'
+        ? `<span class="badge badge-expd">EXPIRED</span>`
+        : `<span class="badge badge-active">ACTIVE</span>`;
+
+      // Email badge
+      const emailBadge = p.email_sent
+        ? `<span class="badge" style="background:rgba(0,230,118,0.15);color:var(--green)">✉ SENT</span>`
+        : `<span class="badge" style="background:rgba(107,107,138,0.15);color:var(--muted)">NOT SENT</span>`;
+
+      return `<tr>
+        <td><span class="pid-tag">${p.participant_id}</span></td>
+        <td style="font-weight:600">${p.name}</td>
+        <td style="font-size:12px;color:var(--muted)">${p.mobile||'–'}</td>
+        <td style="font-size:12px;color:var(--muted)">${p.affiliation||'–'}</td>
+        <td><span class="badge badge-d1" style="font-size:10px">${p.category||'–'}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${p.gender||'–'}</td>
+        <td style="font-size:12px;color:var(--muted)">${p.amity_associated||'–'}</td>
+        ${dot(d1)}${dot(d2)}${dot(d3)}
+        <td style="text-align:center;font-weight:800;color:${tot===3?'var(--green)':tot>0?'var(--yellow)':'var(--muted)'}">${tot}/3</td>
+        <td style="font-size:12px;color:var(--accent);font-weight:700">${p.payable_amount||'–'}</td>
+        <td>${qrBadge}</td>
+        <td>${emailBadge}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { toast('Attendance error: ' + e.message, 'error'); }
+}
+
+/* ===========================================================
+   MODULE: PARTICIPANT PASS PDF
+   =========================================================== */
+async function downloadParticipantPass() {
+  const p = STATE.lastRegistered;
+  if (!p) { toast('No participant data', 'error'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a5' });
+
+  // Background
+  doc.setFillColor(13, 13, 26);
+  doc.rect(0, 0, 148, 210, 'F');
+
+  // Header band
+  doc.setFillColor(108, 99, 255);
+  doc.rect(0, 0, 148, 28, 'F');
+
+  // Event title
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text("⚡ ACCelerate'26", 74, 14, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('PARTICIPANT ENTRY PASS', 74, 22, { align: 'center' });
+
+  // Participant info
+  doc.setTextColor(232, 232, 240);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(p.name, 74, 44, { align: 'center' });
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 107, 138);
+  doc.text(p.affiliation || '—', 74, 52, { align: 'center' });
+
+  // Info rows
+  const rows = [
+    ['Participant ID', p.participant_id],
+    ['Category',      p.category || '—'],
+    ['Mobile',        p.mobile || '—'],
+    ['Email',         p.email || '—'],
+    ['Payable',       p.payable_amount || '—'],
+    ['QR Type',       p.qr_type === 'one-time' ? 'One-Time' : 'Reusable'],
+  ];
+
+  let y = 68;
+  rows.forEach(([label, val]) => {
+    doc.setFontSize(8);
+    doc.setTextColor(107, 107, 138);
+    doc.text(label, 12, y);
+    doc.setTextColor(232, 232, 240);
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(val), 70, y);
+    doc.setFont('helvetica', 'normal');
+    y += 10;
+  });
+
+  // QR Code image
+  const canvas = document.querySelector('#qr-canvas canvas');
+  if (canvas) {
+    const imgData = canvas.toDataURL('image/png');
+    doc.addImage(imgData, 'PNG', 47, y + 4, 54, 54);
+    y += 62;
+  }
+
+  // Footer
+  doc.setFillColor(42, 42, 61);
+  doc.rect(0, 195, 148, 15, 'F');
+  doc.setFontSize(8);
+  doc.setTextColor(107, 107, 138);
+  doc.text('Please present this pass at the venue entrance.', 74, 202, { align: 'center' });
+  doc.text("© ACCelerate'26 — QR System v2", 74, 207, { align: 'center' });
+
+  doc.save(`Pass-${p.participant_id}.pdf`);
+  toast('🎫 Participant pass downloaded!', 'success');
+}
+
+/* ===========================================================
+   MODULE: CSV EXPORT
+   =========================================================== */
+function exportLogsCSV() {
+  const rows = [['ID','Name','Affiliation','Category','Action','Day','QR Status','Scan#','Time']];
+  document.querySelectorAll('#logs-tbody tr').forEach(tr => {
+    const t = tr.querySelectorAll('td');
+    if (t.length >= 9) {
+      rows.push([
+        t[0].textContent.trim(), t[1].textContent.trim(), t[2].textContent.trim(),
+        t[3].textContent.trim(), t[4].textContent.trim(), t[5].textContent.trim(),
+        t[6].textContent.trim(), t[7].textContent.trim(), t[8].textContent.trim()
+      ]);
+    }
+  });
+  dlCSV(rows, 'checkin-logs.csv');
+}
+
+function exportAttCSV() {
+  const rows = [['ID','Name','Mobile','Affiliation','Category','Gender','Amity','Day1','Day2','Day3','Total','Payable','QR Status','Email Sent']];
+  document.querySelectorAll('#att-tbody tr').forEach(tr => {
+    const t = tr.querySelectorAll('td');
+    if (t.length >= 14) rows.push(Array.from(t).map(x => x.textContent.trim()));
+  });
+  dlCSV(rows, 'attendance.csv');
+}
+
+function dlCSV(rows, fname) {
+  const csv = rows.map(r => r.map(c => `"${(c || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = fname;
+  a.click();
+}
+
+/* ===========================================================
+   MODULE: UI HELPERS
+   =========================================================== */
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.className = type; }, 3400);
+}
+
+function setButtonLoading(btn, loading) {
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.classList.toggle('btn-loading', loading);
+}
+</script>
+</body>
+</html>
